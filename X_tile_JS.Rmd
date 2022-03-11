@@ -1,0 +1,178 @@
+#Jenny Smith 
+
+#Original Author:Emilia Lim
+
+#Purpose: Use xtile method to seperate clinical groups *rather than more arbitray median/quantile cut offs*
+
+
+```{r setup}
+# knitr::opts_knit$set(root.dir = 'H:/miRNAseq_Analysis/')
+# setwd("/Volumes/jlsmith3/miRNAseq_Analysis/")
+knitr::opts_knit$set(root.dir = file.path(TARGET,"RNA/miRNAseq/2017.05.23_Cutpoints_T.Alonzo"))
+getwd()
+```
+
+
+```{r}
+findExpGroupsDetail = function(names,exp_vals,sdfp,survival_type){
+  require('dplyr')
+  #names = patient names
+  #exp_vals = expression levels of that gene for each patient listed in names
+  #sdfp = survival data (Event and Time to Event) for each patient listed in names
+  #survival_type = "OS" or "EFS"
+  names(exp_vals) = as.character(names)
+  exp_vals_sorted = sort(exp_vals)
+  sdfp = sdfp[names(exp_vals_sorted),]
+  best_p_val = 1 #from kaplan-meier estimate using survdiff()
+  best_i = 1
+  p_values = c() #from coxph 
+  
+  for(i in floor(length(exp_vals_sorted)*0.1):(ceiling(length(exp_vals_sorted)*0.9))){
+    c_clusters = c(rep("A",i),rep("B",(length(exp_vals_sorted)-i))) #every iteration changes the ratio of patients in group A:Group B
+    
+    
+    if(survival_type=="OS"){
+      sd = survdiff(Surv(clinData.Overall.Survival.Time.in.Days, clinData.Vital.Status) ~ c_clusters, data=sdfp) #calculate p-val
+      coxvar = try(coxph(formula = Surv(clinData.Overall.Survival.Time.in.Days, clinData.Vital.Status) ~ c_clusters, data = sdfp)) #calculate the p-vals
+    }
+    
+    # if(survival_type=="EFS"){
+    #   sd = survdiff(Surv(EFS_time_years, EFS_event_type_ID==1 ) ~ c_clusters, data=sdfp)
+    #   coxvar = try(coxph(formula = Surv(EFS_time_years, EFS_event_type_ID==1 ) ~ c_clusters, data = sdfp))
+    # }
+    
+    p_values = c(p_values,summary(coxvar)$coefficient[5])
+    p_val = 1 - pchisq(sd$chisq, 1)
+    
+    if(as.numeric(p_val)<as.numeric(best_p_val)){
+      best_i = i
+      best_p_val = p_val
+    }
+  }
+  
+  
+
+  GROUPA = names(exp_vals_sorted[1:best_i])
+  GROUPB = names(exp_vals_sorted[(best_i+1):length(exp_vals_sorted)])
+  
+  groupnames = c(GROUPA,GROUPB)
+  groupings = ifelse(names%in%GROUPA,"Low","High")
+  cut_point = mean(exp_vals_sorted[best_i:(best_i+1)])
+  
+  r_data = list(groupings,groupnames, cut_point, p_values)
+  names(r_data) = c("Groupings", "GroupNames", "Cut_Point", "CPH_p-val")
+  
+  return(r_data)
+}
+
+```
+
+
+```{r}
+#load survival data
+survData <- get(load("TARGET_AML_allPatient_SurvivalData.RData"))
+
+survData
+```
+
+```{r}
+#load expression data
+miRNA <- get(load("TARGET_AML_Dx_RPM_miRNAExpression.RData"))
+
+miRNA
+```
+
+```{r}
+
+#change row names
+rownames(miRNA) <- miRNA$geneSymbol
+miRNA <- miRNA[,-1]
+miRNA
+```
+
+```{r}
+#update colnames to USIs
+colnames(miRNA) <- gsub("T.+([A-Z]+{6}).+", "\\1", colnames(miRNA))
+
+#must make it a data matrix
+miRNA <- as.matrix(miRNA)
+```
+
+```{r}
+dim(miRNA)
+```
+
+```{r}
+head(miRNA)
+
+```
+
+```{r}
+#subset the survival data
+Dx_survData <- subset(survData, survData$clinData.TARGET.USI %in% colnames(miRNA))
+
+dim(Dx_survData)
+```
+
+```{r}
+#check out the factor levels
+sapply(Dx_survData[,5:6], levels)
+```
+
+```{r}
+#update to be numeric vals instead of factors
+Dx_survData$clinData.Vital.Status <- ifelse(Dx_survData$clinData.Vital.Status == "Alive", 0, 1)
+Dx_survData$clinData.First.Event <- ifelse(Dx_survData$clinData.First.Event == "Censored", 0, 1)
+
+Dx_survData
+
+```
+
+```{r}
+#correct order
+Dx_survData <- Dx_survData[match(colnames(miRNA), Dx_survData$clinData.TARGET.USI), ]
+
+#make patient USI rownames
+rownames(Dx_survData) <- Dx_survData$clinData.TARGET.USI
+Dx_survData <- Dx_survData[,-1]
+
+Dx_survData
+
+# save(Dx_survData, file = "TARGET_AML_Dx_SurvData.RData")
+
+```
+
+```{r}
+names <- colnames(miRNA)
+names
+```
+
+```{r}
+res <- findExpGroupsDetail(names = names, exp_vals = miRNA[1,], sdfp = Dx_survData, survival_type = "OS")
+
+```
+
+
+```{r}
+
+res
+
+```
+
+```{r}
+
+x <- data.frame(res$Groupings, res$GroupNames)
+
+x
+```
+
+```{r}
+
+x <- x[order(x$res.GroupNames),]
+
+x
+```
+
+
+
+
